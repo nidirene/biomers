@@ -1,0 +1,3 @@
+[submodule "libbiomeval"]
+	path = libbiomeval
+	url = https://github.com/usnistgov/libbiomeval
