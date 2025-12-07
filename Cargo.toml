@@ -1,0 +1,12 @@
+[package]
+name = "biomers"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc = "0.2.178"
+thiserror = "2.0.17"
+
+[build-dependencies]
+bindgen = "0.72.1"
+cmake = "0.1.54"
