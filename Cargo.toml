@@ -10,3 +10,4 @@ thiserror = "2.0.17"
 [build-dependencies]
 bindgen = "0.72.1"
 cmake = "0.1.54"
+cc = "1.0"
