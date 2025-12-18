@@ -72,6 +72,7 @@ fn build_nbis_minimal(nist_src: &PathBuf) {
         "printfet.c", "readfet.c", "strfet.c", "updatfet.c", "writefet.c",
         "fatalerr.c", "syserr.c", "memalloc.c", "computil.c", "dataio.c",
         "intrlv.c", "invbyte.c", "invbytes.c", "bres.c", "nistcom.c",
+        "filesize.c",
     ];
 
     for file in &util_files {
