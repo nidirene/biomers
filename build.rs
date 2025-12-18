@@ -22,18 +22,26 @@ fn main() {
 fn build_nbis_minimal(nist_src: &PathBuf) {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     println!("cargo:warning=Building minimal NBIS for {}-{}", target_os, target_arch);
 
     let nbis_include = nist_src.join("nbis/include");
     let nbis_lib = nist_src.join("nbis/lib");
 
+    // Create a C file with the missing biomeval_nbis_debug global variable
+    // (it's declared extern in headers but commented out in wsq_globals.c)
+    let debug_global_path = out_dir.join("nbis_debug_global.c");
+    std::fs::write(&debug_global_path, "int biomeval_nbis_debug = 0;\n")
+        .expect("Failed to write debug global file");
+
     // Build only the necessary C files for WSQ support
     let mut build = cc::Build::new();
     build
         .include(&nbis_include)
         .flag("-w") // Suppress warnings from old C code
-        .opt_level(2);
+        .opt_level(2)
+        .file(&debug_global_path);
 
     // Set endianness define for little-endian architectures
     if target_arch == "x86_64" || target_arch == "x86" || target_arch == "aarch64" || target_arch == "arm" {
