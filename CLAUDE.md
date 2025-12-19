@@ -6,10 +6,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 biomers is a Rust wrapper for NIST's NBIS (NIST Biometric Image Software) via libbiomeval. It provides safe Rust bindings for WSQ (Wavelet Scalar Quantization) encoding/decoding - the FBI standard for fingerprint image compression.
 
+## Build Modes
+
+The library supports two build modes via Cargo features:
+
+### Minimal Build (Default) - WSQ Only
+Zero external dependencies. Works on all platforms.
+
+```bash
+# Default minimal build (no external libraries needed)
+cargo build
+
+# Explicit minimal build
+cargo build --features minimal
+```
+
+### Full Build - Complete libbiomeval
+Requires CMake and many external libraries.
+
+```bash
+# Full build with all image format support
+cargo build --features full --no-default-features
+```
+
+## Build Requirements
+
+### Minimal Build (Default)
+- **C Compiler**: GCC, Clang, or MSVC
+- **Clang/LLVM**: Required by bindgen for generating FFI bindings
+
+**No other external libraries required!**
+
+### Full Build Requirements
+- **CMake**: Required to build the full libbiomeval C library
+- **Clang/LLVM**: Required by bindgen
+- **System packages**: See "Full Build System Packages" section below
+
+## Platform Dependencies Summary
+
+| Platform | Minimal Build | Full Build |
+|----------|--------------|------------|
+| **Windows** | MSVC CRT only | OpenSSL, JPEG, PNG, TIFF, OpenJPEG, zlib, lzma, SQLite, BerkeleyDB (via vcpkg) |
+| **Linux** | libc, libm (standard) | All above + libstdc++ |
+| **macOS** | libc, libm (standard) | All above + Security framework |
+| **iOS** | C++ runtime | N/A (use minimal) |
+| **Android** | NDK runtime | N/A (use minimal) |
+
 ## Build Commands
 
 ```bash
-# Build the library (requires CMake, Clang/LLVM for bindgen)
+# Build the library (minimal, no external deps)
 cargo build
 
 # Run the demo example
@@ -17,14 +63,20 @@ cargo run --example demo
 
 # Run tests
 cargo test
+
+# Build for release
+cargo build --release
+
+# Cross-compile for iOS (minimal build)
+cargo build --target aarch64-apple-ios
+
+# Cross-compile for Android (minimal build)
+cargo build --target aarch64-linux-android
 ```
 
-## Build Requirements
+## Full Build System Packages
 
-- **CMake**: Required to build the libbiomeval C library
-- **Clang/LLVM**: Required by bindgen for generating FFI bindings
-
-### System Packages
+Only needed if using `--features full`:
 
 **Ubuntu:**
 ```bash
@@ -59,8 +111,9 @@ vcpkg install openssl openjpeg libjpeg-turbo libpng tiff zlib msmpi berkeleydb s
 
 ```
 biomers/
-├── build.rs          # CMake build + bindgen FFI generation
+├── build.rs          # Build script: minimal (cc) or full (CMake)
 ├── wrapper.h         # C headers to expose via bindgen
+├── Cargo.toml        # Features: minimal (default), full
 ├── libbiomeval/      # Git submodule: NIST libbiomeval (contains NBIS)
 └── src/
     ├── lib.rs        # Public API re-exports
@@ -71,10 +124,16 @@ biomers/
 
 ### Build Process
 
-1. `build.rs` uses CMake to compile libbiomeval into a single `biomeval.lib` static library
-2. On Windows with VCPKG_ROOT set, automatically configures CMAKE_TOOLCHAIN_FILE
-3. bindgen generates Rust FFI bindings from `wrapper.h` into `$OUT_DIR/bindings.rs`
-4. `sys.rs` includes the generated bindings (functions prefixed with `biomeval_nbis_`)
+**Minimal Build (default):**
+1. `build.rs` compiles only WSQ/JPEGL C files directly using `cc` crate
+2. Creates static library `nbis_wsq` with ~40 C source files (~18,000 lines)
+3. bindgen generates Rust FFI bindings from `wrapper.h`
+4. No external libraries linked
+
+**Full Build (--features full):**
+1. `build.rs` uses CMake to compile full libbiomeval
+2. Links against external image libraries (JPEG, PNG, TIFF, etc.)
+3. bindgen generates Rust FFI bindings from `wrapper.h`
 
 ### Public API
 
@@ -83,7 +142,7 @@ biomers/
 
 All functions handle C memory allocation/deallocation internally and return Rust `Vec<u8>`.
 
-### Windows Runtime
+### Windows Runtime (Full Build Only)
 
 Copy vcpkg DLLs to executable directory:
 ```
@@ -105,3 +164,4 @@ The NBIS folder structure (an2k, jpegb, jpegl, wsq) does not include a JP2 encod
 ### Other Notes
 - Input images are 8-bit grayscale only
 - WSQ encoding uses 500 PPI (standard for biometrics)
+- Minimal build includes JPEGL (lossless JPEG) in addition to WSQ

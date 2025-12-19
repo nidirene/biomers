@@ -3,11 +3,20 @@ name = "biomers"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["minimal"]
+# Minimal build: WSQ-only with zero external dependencies
+# Works on all platforms (Windows, Linux, macOS, iOS, Android)
+minimal = []
+# Full build: Complete libbiomeval via CMake with all image format support
+# Requires: OpenSSL, JPEG, PNG, TIFF, OpenJPEG, SQLite, BerkeleyDB, zlib, lzma
+full = ["dep:cmake"]
+
 [dependencies]
 libc = "0.2.178"
 thiserror = "2.0.17"
 
 [build-dependencies]
 bindgen = "0.72.1"
-cmake = "0.1.54"
 cc = "1.0"
+cmake = { version = "0.1.54", optional = true }

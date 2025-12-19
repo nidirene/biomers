@@ -1,7 +1,10 @@
 // wrapper.h
+// Minimal NBIS headers for WSQ encoding/decoding
+// These have no external library dependencies
 
-// NBIS utilities
 #include <wsq.h>
-#include <jpegb.h>
 #include <jpegl.h>
-// #include <an2k.h> // Uncomment if you need ANSI/NIST 2000 parsing
+
+// Full build headers (require external libraries):
+// #include <jpegb.h>  // Requires libjpeg
+// #include <an2k.h>   // Requires multiple external libraries

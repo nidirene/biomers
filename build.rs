@@ -5,26 +5,31 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let nist_src = PathBuf::from("libbiomeval");
 
-    // For iOS/Android, build only the minimal NBIS library directly
-    // (avoids complex libbiomeval dependencies like OpenSSL, BerkeleyDB, etc.)
-    if target_os == "ios" || target_os == "android" {
-        build_nbis_minimal(&nist_src);
-    } else {
+    // Check which feature is enabled
+    let use_full_build = env::var("CARGO_FEATURE_FULL").is_ok();
+
+    if use_full_build {
+        #[cfg(feature = "full")]
         build_full_libbiomeval(&nist_src);
+        #[cfg(not(feature = "full"))]
+        panic!("Full build requested but cmake dependency not available. Add 'full' feature.");
+    } else {
+        // Default: minimal build for all platforms
+        build_nbis_minimal(&nist_src);
     }
 
     // Generate Rust bindings (same for all platforms)
     generate_bindings(&nist_src, &target_os);
 }
 
-/// Build minimal NBIS library for mobile platforms (iOS/Android)
-/// Only includes WSQ-related code without external dependencies
+/// Build minimal NBIS library for all platforms
+/// Only includes WSQ/JPEGL-related code without external dependencies
 fn build_nbis_minimal(nist_src: &PathBuf) {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    println!("cargo:warning=Building minimal NBIS for {}-{}", target_os, target_arch);
+    println!("cargo:warning=Building minimal NBIS (WSQ-only) for {}-{}", target_os, target_arch);
 
     let nbis_include = nist_src.join("nbis/include");
     let nbis_lib = nist_src.join("nbis/lib");
@@ -39,13 +44,36 @@ fn build_nbis_minimal(nist_src: &PathBuf) {
     let mut build = cc::Build::new();
     build
         .include(&nbis_include)
-        .flag("-w") // Suppress warnings from old C code
         .opt_level(2)
         .file(&debug_global_path);
 
+    // Platform-specific compiler flags
+    match target_os.as_str() {
+        "windows" => {
+            // MSVC doesn't use -w, use /W0 for no warnings
+            build.flag_if_supported("/W0");
+            // Suppress specific MSVC warnings for old C code
+            build.flag_if_supported("/wd4996"); // deprecated functions
+            build.flag_if_supported("/wd4244"); // conversion warnings
+            build.flag_if_supported("/wd4267"); // size_t conversion
+        }
+        _ => {
+            // GCC/Clang: suppress warnings from old C code
+            build.flag("-w");
+        }
+    }
+
     // Set endianness define for little-endian architectures
-    if target_arch == "x86_64" || target_arch == "x86" || target_arch == "aarch64" || target_arch == "arm" {
-        build.define("__NBISLE__", None);
+    // Most modern systems are little-endian
+    match target_arch.as_str() {
+        "x86_64" | "x86" | "aarch64" | "arm" | "wasm32" | "wasm64" => {
+            build.define("__NBISLE__", None);
+        }
+        _ => {
+            // For unknown architectures, assume little-endian (most common)
+            // Big-endian systems like PowerPC would need __NBISBE__
+            build.define("__NBISLE__", None);
+        }
     }
 
     // WSQ core files
@@ -57,7 +85,7 @@ fn build_nbis_minimal(nist_src: &PathBuf) {
         }
     }
 
-    // JPEGL files (needed by WSQ for some internal functions)
+    // JPEGL files (needed by WSQ for Huffman coding and internal functions)
     for entry in std::fs::read_dir(nbis_lib.join("jpegl")).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
@@ -86,14 +114,32 @@ fn build_nbis_minimal(nist_src: &PathBuf) {
 
     println!("cargo:rustc-link-lib=static=nbis_wsq");
 
-    // Link C++ standard library for iOS
-    if target_os == "ios" {
-        println!("cargo:rustc-link-lib=c++");
+    // Platform-specific runtime linkage
+    match target_os.as_str() {
+        "ios" => {
+            println!("cargo:rustc-link-lib=c++");
+        }
+        "android" => {
+            // Android NDK provides libc and libm automatically
+        }
+        "macos" => {
+            // macOS provides libc and libm automatically via System framework
+        }
+        "linux" => {
+            // Linux libc and libm are linked automatically
+        }
+        "windows" => {
+            // MSVC CRT is linked automatically
+        }
+        _ => {}
     }
 }
 
-/// Build full libbiomeval for desktop platforms
+/// Build full libbiomeval for desktop platforms (requires cmake feature)
+#[cfg(feature = "full")]
 fn build_full_libbiomeval(nist_src: &PathBuf) {
+    println!("cargo:warning=Building full libbiomeval via CMake");
+
     // 1. Build the C library using CMake
     let mut cmake_config = cmake::Config::new(nist_src);
 
@@ -208,29 +254,34 @@ fn generate_bindings(nist_src: &PathBuf, target_os: &str) {
         .clang_arg(format!("-I{}", nist_src.join("nbis/include").display()))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-    // Add platform-specific include paths for dependencies like jpeglib.h
-    if target_os == "macos" {
-        // MacPorts include path
-        bindgen_builder = bindgen_builder.clang_arg("-I/opt/local/include");
-        // Homebrew include path (Intel and ARM)
-        bindgen_builder = bindgen_builder.clang_arg("-I/usr/local/include");
-        bindgen_builder = bindgen_builder.clang_arg("-I/opt/homebrew/include");
-    } else if target_os == "ios" {
-        // iOS uses SDK headers, jpeglib.h not needed for minimal build
-        // Add MacPorts/Homebrew for host system headers during bindgen
-        bindgen_builder = bindgen_builder.clang_arg("-I/opt/local/include");
-        bindgen_builder = bindgen_builder.clang_arg("-I/opt/homebrew/include");
-    }
-
-    // Add vcpkg include path for jpeglib.h and other dependencies (Windows)
-    if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
-        let vcpkg_include = PathBuf::from(&vcpkg_root)
-            .join("installed")
-            .join("x64-windows")
-            .join("include");
-        if vcpkg_include.exists() {
-            bindgen_builder = bindgen_builder.clang_arg(format!("-I{}", vcpkg_include.display()));
+    // For minimal builds, we don't need external library headers
+    // But we may still need system include paths for standard headers
+    match target_os {
+        "macos" => {
+            // MacPorts include path
+            bindgen_builder = bindgen_builder.clang_arg("-I/opt/local/include");
+            // Homebrew include path (Intel and ARM)
+            bindgen_builder = bindgen_builder.clang_arg("-I/usr/local/include");
+            bindgen_builder = bindgen_builder.clang_arg("-I/opt/homebrew/include");
         }
+        "ios" => {
+            // iOS uses SDK headers
+            bindgen_builder = bindgen_builder.clang_arg("-I/opt/local/include");
+            bindgen_builder = bindgen_builder.clang_arg("-I/opt/homebrew/include");
+        }
+        "windows" => {
+            // Add vcpkg include path if available (for full builds)
+            if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
+                let vcpkg_include = PathBuf::from(&vcpkg_root)
+                    .join("installed")
+                    .join("x64-windows")
+                    .join("include");
+                if vcpkg_include.exists() {
+                    bindgen_builder = bindgen_builder.clang_arg(format!("-I{}", vcpkg_include.display()));
+                }
+            }
+        }
+        _ => {}
     }
 
     let bindings = bindgen_builder
