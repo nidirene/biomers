@@ -269,6 +269,34 @@ fn generate_bindings(nist_src: &PathBuf, target_os: &str) {
             bindgen_builder = bindgen_builder.clang_arg("-I/opt/local/include");
             bindgen_builder = bindgen_builder.clang_arg("-I/opt/homebrew/include");
         }
+        "android" => {
+            // bindgen drives libclang directly, so (unlike the cc crate) it does
+            // not automatically inherit the Android NDK target/sysroot. Without
+            // these, clang defaults to the host and fails to find <stdio.h> etc.
+            let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+
+            match ndk_sysroot_from_cc().or_else(ndk_sysroot_from_env) {
+                Some(sysroot) => {
+                    bindgen_builder =
+                        bindgen_builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+                }
+                None => {
+                    println!(
+                        "cargo:warning=Android NDK sysroot not found; bindgen may fail to \
+                         locate system headers. Set ANDROID_NDK_HOME to the NDK root."
+                    );
+                }
+            }
+
+            let clang_target = match target_arch.as_str() {
+                "arm" => "armv7a-linux-androideabi",
+                "aarch64" => "aarch64-linux-android",
+                "x86" => "i686-linux-android",
+                "x86_64" => "x86_64-linux-android",
+                other => other,
+            };
+            bindgen_builder = bindgen_builder.clang_arg(format!("--target={}", clang_target));
+        }
         "windows" => {
             // Add vcpkg include path if available (for full builds)
             if let Ok(vcpkg_root) = env::var("VCPKG_ROOT") {
@@ -292,4 +320,33 @@ fn generate_bindings(nist_src: &PathBuf, target_os: &str) {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+/// Derive the Android NDK sysroot from the C compiler `cc` selected for this
+/// target. The Android cross-compiler is an NDK clang wrapper at
+/// `.../toolchains/llvm/prebuilt/<host>/bin/<triple><api>-clang`, and its
+/// sysroot sits alongside at `.../toolchains/llvm/prebuilt/<host>/sysroot`.
+fn ndk_sysroot_from_cc() -> Option<PathBuf> {
+    let compiler = cc::Build::new().try_get_compiler().ok()?;
+    let sysroot = compiler.path().parent()?.parent()?.join("sysroot");
+    sysroot.join("usr/include/stdio.h").exists().then_some(sysroot)
+}
+
+/// Derive the Android NDK sysroot from ANDROID_NDK_HOME / ANDROID_NDK_ROOT.
+fn ndk_sysroot_from_env() -> Option<PathBuf> {
+    let ndk = env::var("ANDROID_NDK_HOME")
+        .or_else(|_| env::var("ANDROID_NDK_ROOT"))
+        .ok()?;
+    let host = if cfg!(target_os = "macos") {
+        "darwin-x86_64"
+    } else if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
+    let sysroot = PathBuf::from(ndk)
+        .join("toolchains/llvm/prebuilt")
+        .join(host)
+        .join("sysroot");
+    sysroot.join("usr/include/stdio.h").exists().then_some(sysroot)
 }
